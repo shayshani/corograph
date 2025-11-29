@@ -91,8 +91,8 @@ parse_output() {
     local pending_cycles=$(grep '\[PERF\] l1d_pend_miss.pending_cycles:' "$output_file" | awk -F': ' '{print $2}' | tr -d ' ')
     local stalls_mem=$(grep '\[PERF\] cycle_activity.stalls_mem_any:' "$output_file" | awk -F': ' '{print $2}' | tr -d ' ')
 
-    # Extract best time from output
-    local time_sec=$(grep 'time:' "$output_file" | awk '{print $2}' | sort -n | head -1)
+    # Extract best time from output (match "time: X.XXX sec" but not "Total measured time:")
+    local time_sec=$(grep -E '^time:' "$output_file" | awk '{print $2}' | sort -n | head -1)
 
     # Calculate metrics using Python for precision
     python3 - "$cycles" "$instructions" "$pending" "$pending_cycles" "$stalls_mem" "$time_sec" "$algo" "$graph" "$threads" "$SUMMARY_FILE" << 'PYTHON_SCRIPT'
