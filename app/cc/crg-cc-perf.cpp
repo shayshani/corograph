@@ -276,60 +276,46 @@ int main(int argc, char **argv) {
   temp tt(G.numV);
   readGraphDispatch(tt);
 
-  // ============ WARMUP RUN (NOT MEASURED) ============
-  std::cout << "=== WARMUP RUN (not measured) ===\n";
-  {
-    galois::do_all(
-        galois::iterate(tt),
-        [&](const uint32 &n) {
-          label[n].comp_current = n;
-          label[n].comp_old = MAX_NUM;
-        },
-        galois::no_stats(), galois::loopname("initNodeData"));
-    cc(G, tt, label);
-    std::cout << "Warmup complete\n";
-  }
+  std::cout << "INFO: Using " << numThreads << " threads\n";
 
-  // ============ MEASURED RUNS ============
-  std::cout << "\n=== MEASURED RUNS (perf counting enabled) ===\n";
+  // ============ MEASURED RUN (NO WARMUP) ============
+  std::cout << "\n=== MEASURED RUN ===\n";
 
+  galois::do_all(
+      galois::iterate(tt),
+      [&](const uint32 &n) {
+        label[n].comp_current = n;
+        label[n].comp_old = MAX_NUM;
+      },
+      galois::no_stats(), galois::loopname("initNodeData"));
+
+  // START PERF COUNTING
   perf_start();
 
-  double total_time = 0;
-  for (uint32 iter = 0; iter < 5; iter++) {
-    galois::do_all(
-        galois::iterate(tt),
-        [&](const uint32 &n) {
-          label[n].comp_current = n;
-          label[n].comp_old = MAX_NUM;
-        },
-        galois::no_stats(), galois::loopname("initNodeData"));
+  struct timespec start, end;
+  clock_gettime(CLOCK_REALTIME, &start);
 
-    std::cout << "Running WCC iteration " << iter+1 << "/5\n";
-    struct timespec start, end;
-    double time;
-    clock_gettime(CLOCK_REALTIME, &start);
-    cc(G, tt, label);
-    clock_gettime(CLOCK_REALTIME, &end);
-    time = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
-    total_time += time;
-    printf("time: %lf sec\n", time);
+  cc(G, tt, label);
 
-    std::map<uint32, uint32> mm;
-    for (uint32_t i = 0; i < G.numV; i++) {
-      mm[label[i].comp_current] += 1;
-    }
-    printf("component num: %zu \n", mm.size());
-  }
+  clock_gettime(CLOCK_REALTIME, &end);
 
+  // STOP PERF COUNTING
   perf_stop();
 
-  std::cout << "\n=== TIMING SUMMARY ===\n";
-  printf("Total measured time: %lf sec (5 iterations)\n", total_time);
-  printf("Average time per iteration: %lf sec\n", total_time / 5.0);
+  double time = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+  printf("time: %lf sec\n", time);
 
+  // Verify result
+  std::map<uint32, uint32> mm;
+  for (uint32_t i = 0; i < G.numV; i++) {
+    mm[label[i].comp_current] += 1;
+  }
+  printf("component num: %zu\n", mm.size());
+
+  // Print perf results
   perf_read_and_print();
   perf_cleanup();
 
+  delete[] label;
   return 0;
 }

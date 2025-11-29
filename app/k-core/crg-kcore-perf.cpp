@@ -258,14 +258,18 @@ int main(int argc, char **argv) {
   temp tt(G.numV);
   readGraphDispatch(tt);
 
-  size_t approxNodeData = G.numV * 64;
-  galois::preAlloc(numThreads + approxNodeData / galois::runtime::pagePoolSize());
+  // K-core needs more memory due to repeated InsertBag allocations in the main loop
+  // Increase allocation to avoid "per-thread storage out of memory" errors
+  size_t approxNodeData = G.numV * 512;
+  galois::preAlloc(numThreads * 16 + approxNodeData / galois::runtime::pagePoolSize());
 
   auto *curdeg = new uint32[G.numV];
   auto *ans = new uint32[G.numV];
 
-  // ============ MEASURED RUN (k-core only runs once due to its nature) ============
-  std::cout << "\n=== MEASURED RUN (perf counting enabled) ===\n";
+  std::cout << "INFO: Using " << numThreads << " threads\n";
+
+  // ============ MEASURED RUN (NO WARMUP) ============
+  std::cout << "\n=== MEASURED RUN ===\n";
 
   galois::do_all(
       galois::iterate(tt), [&](const uint32 &n) { curdeg[n] = G.deg[n]; },

@@ -14,11 +14,11 @@ BUILD_DIR="${PROJECT_DIR}/build"
 GRAPHS_DIR="${PROJECT_DIR}/graphs"
 
 # Configuration
-THREADS="${THREADS:-8}"  # Default 8 threads (paper's default)
+THREADS="${THREADS:-1}"  # Default 1 thread (for MLP analysis)
 DELTA="${DELTA:-13}"     # Default delta for SSSP
 # Algorithms to run (space-separated). Set ALGOS env var to override.
 # Available: sssp pr wcc kcore
-ALGOS="${ALGOS:-sssp pr wcc}"  # Skip kcore by default (memory issues on large graphs)
+ALGOS="${ALGOS:-sssp pr wcc}"  # kcore excluded due to memory issues
 
 # Output directory
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)

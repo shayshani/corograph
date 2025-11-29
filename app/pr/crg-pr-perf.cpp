@@ -293,54 +293,44 @@ int main(int argc, char **argv) {
   auto *nextprv = new float[G.numV];
   PR_F prf(curprv, nextprv, G.deg);
 
-  // ============ WARMUP RUN (NOT MEASURED) ============
-  std::cout << "=== WARMUP RUN (not measured) ===\n";
-  {
-    galois::do_all(
-        galois::iterate(all),
-        [&](const uint32 &n) { curprv[n] = 1.0 / G.numV; }, galois::no_stats(),
-        galois::loopname("Reset"));
-    pr(G, all, prf);
-    std::cout << "Warmup complete\n";
-  }
+  std::cout << "INFO: Using " << numThreads << " threads\n";
 
-  // ============ MEASURED RUNS ============
-  std::cout << "\n=== MEASURED RUNS (perf counting enabled) ===\n";
+  // ============ MEASURED RUN (NO WARMUP) ============
+  std::cout << "\n=== MEASURED RUN ===\n";
 
+  galois::do_all(
+      galois::iterate(all),
+      [&](const uint32 &n) { curprv[n] = 1.0 / G.numV; }, galois::no_stats(),
+      galois::loopname("Reset"));
+
+  // START PERF COUNTING
   perf_start();
 
-  double total_time = 0;
-  for (uint32 iter = 0; iter < 5; iter++) {
-    galois::do_all(
-        galois::iterate(all),
-        [&](const uint32 &n) { curprv[n] = 1.0 / G.numV; }, galois::no_stats(),
-        galois::loopname("Reset"));
+  struct timespec start, end;
+  clock_gettime(CLOCK_REALTIME, &start);
 
-    std::cout << "Running PageRank iteration " << iter+1 << "/5\n";
-    struct timespec start, end;
-    double time;
-    clock_gettime(CLOCK_REALTIME, &start);
-    pr(G, all, prf);
-    clock_gettime(CLOCK_REALTIME, &end);
-    time = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
-    total_time += time;
-    printf("time: %lf sec\n", time);
+  pr(G, all, prf);
 
-    float maxpr = 0.0;
-    for (uint32_t i = 0; i < G.numV; i++) {
-      maxpr = std::max(maxpr, curprv[i]);
-    }
-    printf("max pr: %.8f \n", maxpr);
-  }
+  clock_gettime(CLOCK_REALTIME, &end);
 
+  // STOP PERF COUNTING
   perf_stop();
 
-  std::cout << "\n=== TIMING SUMMARY ===\n";
-  printf("Total measured time: %lf sec (5 iterations)\n", total_time);
-  printf("Average time per iteration: %lf sec\n", total_time / 5.0);
+  double time = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+  printf("time: %lf sec\n", time);
 
+  // Verify result
+  float maxpr = 0.0;
+  for (uint32_t i = 0; i < G.numV; i++) {
+    maxpr = std::max(maxpr, curprv[i]);
+  }
+  printf("max pr: %.8f\n", maxpr);
+
+  // Print perf results
   perf_read_and_print();
   perf_cleanup();
 
+  delete[] curprv;
+  delete[] nextprv;
   return 0;
 }

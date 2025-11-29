@@ -88,7 +88,7 @@ void init_galois(int argc, char **argv) {
 }
 
 //==============================================================================
-// Perf event infrastructure - create our own counters and control them precisely
+// Perf event infrastructure
 //==============================================================================
 
 struct PerfCounter {
@@ -108,20 +108,26 @@ void perf_init() {
   struct perf_event_attr pe;
 
   // Define the events we want to measure
+  // Reference: Intel SDM Volume 3B, Chapter 19 (Performance Monitoring Events)
+  // For Cascade Lake (different microarchitectures may need different codes)
   struct {
     uint32_t type;
     uint64_t config;
     const char* name;
   } events[] = {
-    // Cycles and instructions
+    // Cycles and instructions (generic hardware events)
     {PERF_TYPE_HARDWARE, PERF_COUNT_HW_CPU_CYCLES, "cycles"},
     {PERF_TYPE_HARDWARE, PERF_COUNT_HW_INSTRUCTIONS, "instructions"},
 
     // L1D pending miss events (for MLP calculation)
-    // These are raw events for Intel: l1d_pend_miss.pending and l1d_pend_miss.pending_cycles
-    // Event code: 0x48, umask: 0x01 for pending, 0x01 for pending_cycles
-    {PERF_TYPE_RAW, 0x0148, "l1d_pend_miss.pending"},        // event=0x48, umask=0x01
-    {PERF_TYPE_RAW, 0x0148 | (1ULL << 24), "l1d_pend_miss.pending_cycles"}, // with cmask=1
+    // l1d_pend_miss.pending: event=0x48, umask=0x01
+    // Counts weighted cycles of L1D miss outstanding (sum of all outstanding misses each cycle)
+    {PERF_TYPE_RAW, 0x0148, "l1d_pend_miss.pending"},
+
+    // l1d_pend_miss.pending_cycles: event=0x48, umask=0x01, cmask=1
+    // Counts cycles with at least one L1D miss outstanding
+    // cmask is in bits 24-31 of config
+    {PERF_TYPE_RAW, 0x0148 | (1ULL << 24), "l1d_pend_miss.pending_cycles"},
 
     // Cache misses
     {PERF_TYPE_HW_CACHE,
@@ -131,8 +137,9 @@ void perf_init() {
      PERF_COUNT_HW_CACHE_LL | (PERF_COUNT_HW_CACHE_OP_READ << 8) | (PERF_COUNT_HW_CACHE_RESULT_MISS << 16),
      "LLC-load-misses"},
 
-    // cycle_activity.stalls_mem_any - cycles stalled due to memory subsystem (paper's "memory bound" metric)
-    // Intel event code: 0xa3, umask: 0x14, cmask: 0x14 (for Cascade Lake / Skylake-X)
+    // cycle_activity.stalls_mem_any: event=0xa3, umask=0x14, cmask=0x14
+    // Cycles with execution stalls due to memory subsystem
+    // This is the "memory bound" metric used in the CoroGraph paper (measured via VTune)
     {PERF_TYPE_RAW, 0x14a3 | (0x14ULL << 24), "cycle_activity.stalls_mem_any"},
   };
 
@@ -161,14 +168,12 @@ void perf_start() {
     ioctl(pc.fd, PERF_EVENT_IOC_RESET, 0);
     ioctl(pc.fd, PERF_EVENT_IOC_ENABLE, 0);
   }
-  fprintf(stderr, "[PERF] >>> COUNTING ENABLED <<<\n");
 }
 
 void perf_stop() {
   for (auto& pc : perf_counters) {
     ioctl(pc.fd, PERF_EVENT_IOC_DISABLE, 0);
   }
-  fprintf(stderr, "[PERF] >>> COUNTING DISABLED <<<\n");
 }
 
 void perf_read_and_print() {
@@ -177,6 +182,7 @@ void perf_read_and_print() {
   uint64_t cycles = 0, instructions = 0;
   uint64_t pending = 0, pending_cycles = 0;
   uint64_t stalls_mem_any = 0;
+  uint64_t l1_misses = 0, llc_misses = 0;
 
   for (auto& pc : perf_counters) {
     long long count;
@@ -189,6 +195,8 @@ void perf_read_and_print() {
       if (strcmp(pc.name, "l1d_pend_miss.pending") == 0) pending = count;
       if (strcmp(pc.name, "l1d_pend_miss.pending_cycles") == 0) pending_cycles = count;
       if (strcmp(pc.name, "cycle_activity.stalls_mem_any") == 0) stalls_mem_any = count;
+      if (strcmp(pc.name, "L1-dcache-load-misses") == 0) l1_misses = count;
+      if (strcmp(pc.name, "LLC-load-misses") == 0) llc_misses = count;
     }
   }
 
@@ -198,11 +206,17 @@ void perf_read_and_print() {
     fprintf(stderr, "[PERF] IPC: %.3f\n", (double)instructions / cycles);
   }
   if (pending_cycles > 0) {
+    // MLP = average number of L1D misses outstanding when at least one miss is outstanding
+    // MLP = l1d_pend_miss.pending / l1d_pend_miss.pending_cycles
     fprintf(stderr, "[PERF] MLP: %.3f\n", (double)pending / pending_cycles);
-    fprintf(stderr, "[PERF] Memory Stall %% (pending_cycles): %.1f%%\n", (double)pending_cycles / cycles * 100);
+    fprintf(stderr, "[PERF] Memory Stall %% (pending_cycles/cycles): %.1f%%\n",
+            (double)pending_cycles / cycles * 100);
   }
   if (stalls_mem_any > 0 && cycles > 0) {
-    fprintf(stderr, "[PERF] Memory Bound %% (paper metric): %.1f%%\n", (double)stalls_mem_any / cycles * 100);
+    // Memory Bound = fraction of cycles stalled on memory
+    // This is comparable to VTune's "Memory Bound" metric used in the CoroGraph paper
+    fprintf(stderr, "[PERF] Memory Bound %% (stalls_mem_any/cycles): %.1f%%\n",
+            (double)stalls_mem_any / cycles * 100);
   }
   fprintf(stderr, "[PERF] ========================\n\n");
 }
@@ -240,7 +254,6 @@ int main(int argc, char **argv) {
   commandLine P(argc, argv);
 
   uint32 source = startNode;
-  uint32 report = reportNode;
 
   // ============ INITIALIZATION PHASE (NOT MEASURED) ============
   galois::graphs::init_graph(G, P);
@@ -250,72 +263,55 @@ int main(int argc, char **argv) {
   partition(G, numThreads);
 
   size_t approxNodeData = G.numV * 256;
-  galois::preAlloc(
-      numThreads +
-      approxNodeData / galois::runtime::pagePoolSize());
+  galois::preAlloc(numThreads + approxNodeData / galois::runtime::pagePoolSize());
 
   auto *distance = new uint32[G.numV];
 
   std::cout << "INFO: Using delta-step of " << (1 << stepShift) << "\n";
+  std::cout << "INFO: Using " << numThreads << " threads\n";
 
-  // ============ WARMUP RUN (NOT MEASURED) ============
-  std::cout << "=== WARMUP RUN (not measured) ===\n";
-  {
-    for (uint32 i = 0; i < G.numV; i++) {
-      distance[i] = MAX_NUM;
-    }
-    distance[startNode] = 0;
-    galois::InsertBag<vw> initFrontier;
-    initFrontier.push_back(vw(source, 0));
-    deltaStepAlgo(G, initFrontier, distance);
-    std::cout << "Warmup complete\n";
+  // ============ MEASURED RUN (NO WARMUP) ============
+  std::cout << "\n=== MEASURED RUN ===\n";
+
+  for (uint32 i = 0; i < G.numV; i++) {
+    distance[i] = MAX_NUM;
   }
+  distance[startNode] = 0;
+  galois::InsertBag<vw> initFrontier;
+  initFrontier.push_back(vw(source, 0));
 
-  // ============ MEASURED RUNS ============
-  std::cout << "\n=== MEASURED RUNS (perf counting enabled) ===\n";
-
-  // START PERF COUNTING HERE
+  // START PERF COUNTING
   perf_start();
 
-  double total_time = 0;
-  for (uint32 iter = 0; iter < 5; iter++) {
-    for (uint32 i = 0; i < G.numV; i++) {
-      distance[i] = MAX_NUM;
-    }
-    distance[startNode] = 0;
-    galois::InsertBag<vw> initFrontier;
-    initFrontier.push_back(vw(source, 0));
+  struct timespec start, end;
+  clock_gettime(CLOCK_REALTIME, &start);
 
-    std::cout << "Running SSSP iteration " << iter+1 << "/5\n";
-    struct timespec start, end;
-    double time;
-    clock_gettime(CLOCK_REALTIME, &start);
-    deltaStepAlgo(G, initFrontier, distance);
-    clock_gettime(CLOCK_REALTIME, &end);
-    time = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
-    total_time += time;
-    printf("time: %lf sec\n", time);
+  deltaStepAlgo(G, initFrontier, distance);
 
-    uint32_t maxdist = 0;
-    for (uint32_t i = 0; i < G.numV; i++) {
-      if (distance[i] != MAX_NUM)
-        maxdist = std::max(maxdist, distance[i]);
-    }
-    printf("max distance: %d \n", maxdist);
-  }
+  clock_gettime(CLOCK_REALTIME, &end);
 
-  // STOP PERF COUNTING HERE
+  // STOP PERF COUNTING
   perf_stop();
 
-  std::cout << "\n=== TIMING SUMMARY ===\n";
-  printf("Total measured time: %lf sec (5 iterations)\n", total_time);
-  printf("Average time per iteration: %lf sec\n", total_time / 5.0);
-  printf("Best time would be: check individual times above\n");
+  double time = (end.tv_sec - start.tv_sec) + (end.tv_nsec - start.tv_nsec) / 1e9;
+  printf("time: %lf sec\n", time);
 
-  // Read and print perf results
+  // Verify result
+  uint32_t maxdist = 0;
+  uint32_t reachable = 0;
+  for (uint32_t i = 0; i < G.numV; i++) {
+    if (distance[i] != MAX_NUM) {
+      maxdist = std::max(maxdist, distance[i]);
+      reachable++;
+    }
+  }
+  printf("max distance: %d\n", maxdist);
+  printf("reachable vertices: %d / %d\n", reachable, G.numV);
+
+  // Print perf results
   perf_read_and_print();
-
   perf_cleanup();
 
+  delete[] distance;
   return 0;
 }
