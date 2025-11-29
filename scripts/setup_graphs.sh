@@ -37,10 +37,13 @@ download_graph() {
     fi
 
     echo "[EXTRACT] $archive"
-    if [[ "$archive" == *.tar.gz ]] || [[ "$archive" == *.tgz ]]; then
+    if [ -f "$edgefile" ]; then
+        echo "  (edge file already extracted)"
+    elif [[ "$archive" == *.tar.gz ]] || [[ "$archive" == *.tgz ]]; then
         tar -xzf "$archive"
     elif [[ "$archive" == *.gz ]]; then
-        gunzip -k "$archive" 2>/dev/null || true
+        # gunzip to stdout, faster than gunzip -k
+        gunzip -c "$archive" > "$edgefile"
     elif [[ "$archive" == *.zip ]]; then
         unzip -o "$archive"
     fi
