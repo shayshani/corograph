@@ -16,6 +16,9 @@ GRAPHS_DIR="${PROJECT_DIR}/graphs"
 # Configuration
 THREADS="${THREADS:-8}"  # Default 8 threads (paper's default)
 DELTA="${DELTA:-13}"     # Default delta for SSSP
+# Algorithms to run (space-separated). Set ALGOS env var to override.
+# Available: sssp pr wcc kcore
+ALGOS="${ALGOS:-sssp pr wcc}"  # Skip kcore by default (memory issues on large graphs)
 
 # Output directory
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -27,6 +30,7 @@ echo "CoroGraph Comprehensive Benchmark"
 echo "=========================================="
 echo "Threads: $THREADS"
 echo "Delta (SSSP): $DELTA"
+echo "Algorithms: $ALGOS"
 echo "Output directory: $OUTPUT_DIR"
 echo "=========================================="
 echo ""
@@ -136,7 +140,7 @@ for graph_path in "${GRAPHS[@]}"; do
     echo "Graph: $graph_name"
     echo "=========================================="
 
-    for algo in sssp pr wcc kcore; do
+    for algo in $ALGOS; do
         exe="${ALGORITHMS[$algo]}"
         output_file="${OUTPUT_DIR}/${algo}_${graph_name}.txt"
 
