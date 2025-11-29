@@ -130,6 +130,10 @@ void perf_init() {
     {PERF_TYPE_HW_CACHE,
      PERF_COUNT_HW_CACHE_LL | (PERF_COUNT_HW_CACHE_OP_READ << 8) | (PERF_COUNT_HW_CACHE_RESULT_MISS << 16),
      "LLC-load-misses"},
+
+    // cycle_activity.stalls_mem_any - cycles stalled due to memory subsystem (paper's "memory bound" metric)
+    // Intel event code: 0xa3, umask: 0x14, cmask: 0x14 (for Cascade Lake / Skylake-X)
+    {PERF_TYPE_RAW, 0x14a3 | (0x14ULL << 24), "cycle_activity.stalls_mem_any"},
   };
 
   for (auto& ev : events) {
@@ -172,6 +176,7 @@ void perf_read_and_print() {
 
   uint64_t cycles = 0, instructions = 0;
   uint64_t pending = 0, pending_cycles = 0;
+  uint64_t stalls_mem_any = 0;
 
   for (auto& pc : perf_counters) {
     long long count;
@@ -183,6 +188,7 @@ void perf_read_and_print() {
       if (strcmp(pc.name, "instructions") == 0) instructions = count;
       if (strcmp(pc.name, "l1d_pend_miss.pending") == 0) pending = count;
       if (strcmp(pc.name, "l1d_pend_miss.pending_cycles") == 0) pending_cycles = count;
+      if (strcmp(pc.name, "cycle_activity.stalls_mem_any") == 0) stalls_mem_any = count;
     }
   }
 
@@ -193,7 +199,10 @@ void perf_read_and_print() {
   }
   if (pending_cycles > 0) {
     fprintf(stderr, "[PERF] MLP: %.3f\n", (double)pending / pending_cycles);
-    fprintf(stderr, "[PERF] Memory Stall %%: %.1f%%\n", (double)pending_cycles / cycles * 100);
+    fprintf(stderr, "[PERF] Memory Stall %% (pending_cycles): %.1f%%\n", (double)pending_cycles / cycles * 100);
+  }
+  if (stalls_mem_any > 0 && cycles > 0) {
+    fprintf(stderr, "[PERF] Memory Bound %% (paper metric): %.1f%%\n", (double)stalls_mem_any / cycles * 100);
   }
   fprintf(stderr, "[PERF] ========================\n\n");
 }

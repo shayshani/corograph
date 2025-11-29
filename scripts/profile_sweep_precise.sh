@@ -45,7 +45,7 @@ echo ""
 
 # Summary file
 SUMMARY="$OUTPUT_DIR/summary_${GRAPH_NAME}.csv"
-echo "graph,threads,mlp,ipc,memory_stall_pct,time_sec" > "$SUMMARY"
+echo "graph,threads,mlp,ipc,memory_stall_pct,memory_bound_pct,time_sec" > "$SUMMARY"
 
 for T in $THREADS; do
     echo ""
@@ -76,6 +76,7 @@ cycles = 0
 instructions = 0
 pending = 0
 pending_cycles = 0
+stalls_mem_any = 0
 
 # Look for [PERF] lines
 for line in content.split('\n'):
@@ -87,6 +88,8 @@ for line in content.split('\n'):
         pending = int(line.split(':')[1].strip())
     elif '[PERF] l1d_pend_miss.pending_cycles:' in line:
         pending_cycles = int(line.split(':')[1].strip())
+    elif '[PERF] cycle_activity.stalls_mem_any:' in line:
+        stalls_mem_any = int(line.split(':')[1].strip())
 
 # Parse timing - get best of the 5 measured iterations
 times = re.findall(r'time:\s+([\d.]+)\s+sec', content)
@@ -99,12 +102,13 @@ else:
 mlp = pending / pending_cycles if pending_cycles > 0 else 0
 ipc = instructions / cycles if cycles > 0 else 0
 mem_stall = pending_cycles / cycles * 100 if cycles > 0 else 0
+mem_bound = stalls_mem_any / cycles * 100 if cycles > 0 else 0
 
 # Append to summary
 with open(summary_file, 'a') as f:
-    f.write(f"{graph_name},{threads},{mlp:.2f},{ipc:.2f},{mem_stall:.1f},{time_sec:.3f}\n")
+    f.write(f"{graph_name},{threads},{mlp:.2f},{ipc:.2f},{mem_stall:.1f},{mem_bound:.1f},{time_sec:.3f}\n")
 
-print(f"\n  SUMMARY: MLP={mlp:.2f}, IPC={ipc:.2f}, MemStall={mem_stall:.1f}%, Time={time_sec:.3f}s")
+print(f"\n  SUMMARY: MLP={mlp:.2f}, IPC={ipc:.2f}, MemStall={mem_stall:.1f}%, MemBound(paper)={mem_bound:.1f}%, Time={time_sec:.3f}s")
 PYTHON_SCRIPT
 
 done
