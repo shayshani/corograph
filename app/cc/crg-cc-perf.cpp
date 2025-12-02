@@ -156,6 +156,18 @@ void perf_init() {
      PERF_COUNT_HW_CACHE_LL | (PERF_COUNT_HW_CACHE_OP_READ << 8) | (PERF_COUNT_HW_CACHE_RESULT_MISS << 16),
      "LLC-load-misses"},
     {PERF_TYPE_RAW, 0x14a3 | (0x14ULL << 24), "cycle_activity.stalls_mem_any"},
+
+    // mem_inst_retired.all_loads: event=0xD0, umask=0x81
+    // Counts all retired load instructions
+    {PERF_TYPE_RAW, 0x81D0, "mem_inst_retired.all_loads"},
+
+    // mem_load_retired.l3_miss: event=0xD1, umask=0x20
+    // Counts retired load instructions that missed L3 cache
+    {PERF_TYPE_RAW, 0x20D1, "mem_load_retired.l3_miss"},
+
+    // longest_lat_cache.miss: event=0x2E, umask=0x41
+    // Counts LLC misses including prefetches
+    {PERF_TYPE_RAW, 0x412E, "longest_lat_cache.miss"},
   };
 
   for (auto& ev : events) {

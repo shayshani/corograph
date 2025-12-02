@@ -79,7 +79,7 @@ echo ""
 
 # Summary CSV file
 SUMMARY_FILE="${OUTPUT_DIR}/summary.csv"
-echo "algorithm,graph,threads,mlp,ipc,memory_stall_pct,memory_bound_pct,time_sec" > "$SUMMARY_FILE"
+echo "algorithm,graph,threads,mlp,ipc,memory_stall_pct,memory_bound_pct,all_loads,l3_miss_loads,l3_miss_total,time_sec" > "$SUMMARY_FILE"
 
 # Function to parse perf output and extract metrics
 parse_output() {
@@ -94,12 +94,15 @@ parse_output() {
     local pending=$(grep '\[PERF\] l1d_pend_miss.pending:' "$output_file" | awk -F': ' '{print $2}' | tr -d ' ')
     local pending_cycles=$(grep '\[PERF\] l1d_pend_miss.pending_cycles:' "$output_file" | awk -F': ' '{print $2}' | tr -d ' ')
     local stalls_mem=$(grep '\[PERF\] cycle_activity.stalls_mem_any:' "$output_file" | awk -F': ' '{print $2}' | tr -d ' ')
+    local all_loads=$(grep '\[PERF\] mem_inst_retired.all_loads:' "$output_file" | awk -F': ' '{print $2}' | tr -d ' ')
+    local l3_miss_loads=$(grep '\[PERF\] mem_load_retired.l3_miss:' "$output_file" | awk -F': ' '{print $2}' | tr -d ' ')
+    local l3_miss_total=$(grep '\[PERF\] longest_lat_cache.miss:' "$output_file" | awk -F': ' '{print $2}' | tr -d ' ')
 
     # Extract best time from output (match "time: X.XXX sec" but not "Total measured time:")
     local time_sec=$(grep -E '^time:' "$output_file" | awk '{print $2}' | sort -n | head -1)
 
     # Calculate metrics using Python for precision
-    python3 - "$cycles" "$instructions" "$pending" "$pending_cycles" "$stalls_mem" "$time_sec" "$algo" "$graph" "$threads" "$SUMMARY_FILE" << 'PYTHON_SCRIPT'
+    python3 - "$cycles" "$instructions" "$pending" "$pending_cycles" "$stalls_mem" "$all_loads" "$l3_miss_loads" "$l3_miss_total" "$time_sec" "$algo" "$graph" "$threads" "$SUMMARY_FILE" << 'PYTHON_SCRIPT'
 import sys
 
 cycles = int(sys.argv[1]) if sys.argv[1] else 0
@@ -107,11 +110,14 @@ instructions = int(sys.argv[2]) if sys.argv[2] else 0
 pending = int(sys.argv[3]) if sys.argv[3] else 0
 pending_cycles = int(sys.argv[4]) if sys.argv[4] else 0
 stalls_mem = int(sys.argv[5]) if sys.argv[5] else 0
-time_sec = float(sys.argv[6]) if sys.argv[6] else 0
-algo = sys.argv[7]
-graph = sys.argv[8]
-threads = sys.argv[9]
-summary_file = sys.argv[10]
+all_loads = int(sys.argv[6]) if sys.argv[6] else 0
+l3_miss_loads = int(sys.argv[7]) if sys.argv[7] else 0
+l3_miss_total = int(sys.argv[8]) if sys.argv[8] else 0
+time_sec = float(sys.argv[9]) if sys.argv[9] else 0
+algo = sys.argv[10]
+graph = sys.argv[11]
+threads = sys.argv[12]
+summary_file = sys.argv[13]
 
 # Calculate metrics
 ipc = instructions / cycles if cycles > 0 else 0
@@ -121,9 +127,9 @@ mem_bound = stalls_mem / cycles * 100 if cycles > 0 else 0
 
 # Append to summary
 with open(summary_file, 'a') as f:
-    f.write(f"{algo},{graph},{threads},{mlp:.2f},{ipc:.2f},{mem_stall:.1f},{mem_bound:.1f},{time_sec:.3f}\n")
+    f.write(f"{algo},{graph},{threads},{mlp:.2f},{ipc:.2f},{mem_stall:.1f},{mem_bound:.1f},{all_loads},{l3_miss_loads},{l3_miss_total},{time_sec:.3f}\n")
 
-print(f"  MLP: {mlp:.2f}, IPC: {ipc:.2f}, MemStall: {mem_stall:.1f}%, MemBound: {mem_bound:.1f}%, Time: {time_sec:.3f}s")
+print(f"  MLP: {mlp:.2f}, IPC: {ipc:.2f}, MemStall: {mem_stall:.1f}%, MemBound: {mem_bound:.1f}%, Loads: {all_loads}, L3MissLoads: {l3_miss_loads}, L3MissTotal: {l3_miss_total}, Time: {time_sec:.3f}s")
 PYTHON_SCRIPT
 }
 
