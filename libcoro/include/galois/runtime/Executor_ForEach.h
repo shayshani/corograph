@@ -8,23 +8,7 @@
 
 #include "galois/runtime/Context.h"
 #include "galois/runtime/Corobj.h"
-
-// Compile with -DCOUNT_WORK to enable work counters
-#ifdef COUNT_WORK
-namespace galois::runtime::counters {
-  inline uint64_t prefetches{0};  // prefetch instructions issued
-
-  inline void reset() {
-    prefetches = 0;
-  }
-
-  inline void print() {
-    fprintf(stderr, "\n[WORK] === WORK COUNTERS ===\n");
-    fprintf(stderr, "[WORK] prefetches: %lu\n", prefetches);
-    fprintf(stderr, "[WORK] ========================\n\n");
-  }
-}
-#endif
+#include "galois/runtime/WorkCounters.h"
 
 namespace galois {
 //! Internal Galois functionality - Use at your own risk.
