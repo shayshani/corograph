@@ -301,6 +301,10 @@ int main(int argc, char **argv) {
       },
       galois::no_stats(), galois::loopname("initNodeData"));
 
+#ifdef COUNT_WORK
+  galois::runtime::counters::reset();
+#endif
+
   // START PERF COUNTING
   perf_start();
 
@@ -326,6 +330,11 @@ int main(int argc, char **argv) {
 
   // Print perf results
   perf_read_and_print();
+
+#ifdef COUNT_WORK
+  galois::runtime::counters::print();
+#endif
+
   perf_cleanup();
 
   delete[] label;

@@ -4,6 +4,23 @@
 #include "galois/Bag.h"
 #include "galois/Loops.h"
 
+// Compile with -DCOUNT_WORK to enable work counters
+#ifdef COUNT_WORK
+namespace galois::runtime::counters {
+  inline uint64_t prefetches{0};  // prefetch instructions issued
+
+  inline void reset() {
+    prefetches = 0;
+  }
+
+  inline void print() {
+    fprintf(stderr, "\n[WORK] === WORK COUNTERS ===\n");
+    fprintf(stderr, "[WORK] prefetches: %lu\n", prefetches);
+    fprintf(stderr, "[WORK] ========================\n\n");
+  }
+}
+#endif
+
 namespace galois::runtime {
 
 template <class Graph, class Func> class syncExecutor {
@@ -32,8 +49,12 @@ public:
             return;
           auto &vtxA = graph.plgraph[n];
           auto *Arr = vtxA.PE;
-          if (vtxA.deg2)
+          if (vtxA.deg2) {
             _mm_prefetch(&graph.pledge[vtxA.offset], _MM_HINT_T0);
+#ifdef COUNT_WORK
+            counters::prefetches++;
+#endif
+          }
           for (uint32 e = 0; e < vtxA.deg1; e += 2) {
             if (!(Arr[e] >> MAX_OFS))
               ctx2[Arr[e] >> 18].emplace_back(Arr[e], Arr[e + 1],

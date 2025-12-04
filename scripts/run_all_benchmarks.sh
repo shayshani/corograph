@@ -27,13 +27,8 @@ DELTA="${DELTA:-13}"     # Default delta for SSSP
 MODE="${MODE:-perf}"     # perf or count
 
 # Algorithms to run (space-separated). Set ALGOS env var to override.
-# For MODE=count, only coroutine-based algorithms are valid: sssp, kcore
-# For MODE=perf, all algorithms are valid: sssp, kcore, pr, wcc
-if [ "$MODE" == "count" ]; then
-    ALGOS="${ALGOS:-sssp kcore}"
-else
-    ALGOS="${ALGOS:-sssp kcore pr wcc}"
-fi
+# All algorithms: sssp, kcore, pr, wcc
+ALGOS="${ALGOS:-sssp kcore pr wcc}"
 
 # Output directory
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
@@ -82,22 +77,15 @@ ALGORITHMS_COUNT["kcore"]="${BUILD_DIR}/app/k-core/crg-kcore-perf-count"
 ALGO_TYPE["kcore"]="coroutine"
 
 # Synchronous algorithms (use Executor_EdgeMap.h or do_all)
+# PR uses Executor_EdgeMap.h (has 1 prefetch per high-degree vertex)
+# WCC uses do_all loops directly (no prefetches)
 ALGORITHMS["pr"]="${BUILD_DIR}/app/pr/crg-pr-perf"
+ALGORITHMS_COUNT["pr"]="${BUILD_DIR}/app/pr/crg-pr-perf-count"
 ALGO_TYPE["pr"]="sync"
 
 ALGORITHMS["wcc"]="${BUILD_DIR}/app/cc/crg-cc-perf"
-ALGO_TYPE["wcc"]="sync"
-
-# Validate algorithms for count mode
-if [ "$MODE" == "count" ]; then
-    for algo in $ALGOS; do
-        if [ "${ALGO_TYPE[$algo]}" != "coroutine" ]; then
-            echo "ERROR: Algorithm '$algo' is not coroutine-based and cannot be used with MODE=count"
-            echo "Only coroutine-based algorithms (sssp, kcore) support prefetch counting."
-            exit 1
-        fi
-    done
-fi
+ALGORITHMS_COUNT["wcc"]="${BUILD_DIR}/app/cc/crg-cc-perf-count"
+ALGO_TYPE["wcc"]="sync (no prefetch)"
 
 # Check all executables
 echo "Checking executables..."

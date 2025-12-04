@@ -315,6 +315,10 @@ int main(int argc, char **argv) {
       [&](const uint32 &n) { curprv[n] = 1.0 / G.numV; }, galois::no_stats(),
       galois::loopname("Reset"));
 
+#ifdef COUNT_WORK
+  galois::runtime::counters::reset();
+#endif
+
   // START PERF COUNTING
   perf_start();
 
@@ -340,6 +344,11 @@ int main(int argc, char **argv) {
 
   // Print perf results
   perf_read_and_print();
+
+#ifdef COUNT_WORK
+  galois::runtime::counters::print();
+#endif
+
   perf_cleanup();
 
   delete[] curprv;
