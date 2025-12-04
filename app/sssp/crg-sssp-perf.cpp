@@ -1,6 +1,7 @@
 #include "galois/Bag.h"
 #include "galois/graphs/LCGraph.h"
 #include "galois/substrate/ThreadPool.h"
+#include "galois/runtime/Executor_ForEach.h"  // For work counters
 #include <sys/ioctl.h>
 #include <linux/perf_event.h>
 #include <asm/unistd.h>
@@ -292,6 +293,10 @@ int main(int argc, char **argv) {
   galois::InsertBag<vw> initFrontier;
   initFrontier.push_back(vw(source, 0));
 
+#ifdef COUNT_WORK
+  galois::runtime::counters::reset();
+#endif
+
   // START PERF COUNTING
   perf_start();
 
@@ -322,6 +327,11 @@ int main(int argc, char **argv) {
 
   // Print perf results
   perf_read_and_print();
+
+#ifdef COUNT_WORK
+  galois::runtime::counters::print();
+#endif
+
   perf_cleanup();
 
   delete[] distance;

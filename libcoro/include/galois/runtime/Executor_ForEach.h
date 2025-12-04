@@ -9,6 +9,23 @@
 #include "galois/runtime/Context.h"
 #include "galois/runtime/Corobj.h"
 
+// Compile with -DCOUNT_WORK to enable work counters
+#ifdef COUNT_WORK
+namespace galois::runtime::counters {
+  inline uint64_t prefetches{0};  // prefetch instructions issued
+
+  inline void reset() {
+    prefetches = 0;
+  }
+
+  inline void print() {
+    fprintf(stderr, "\n[WORK] === WORK COUNTERS ===\n");
+    fprintf(stderr, "[WORK] prefetches: %lu\n", prefetches);
+    fprintf(stderr, "[WORK] ========================\n\n");
+  }
+}
+#endif
+
 namespace galois {
 //! Internal Galois functionality - Use at your own risk.
 namespace runtime {
@@ -128,13 +145,20 @@ protected:
         for (int prid = id; prid < std::min(id + 64, (int)tmp.size()); prid++) {
           _mm_prefetch(&graph.plgraph[(*tmp[prid]).vid], _MM_HINT_T0);
         }
+#ifdef COUNT_WORK
+        counters::prefetches += std::min(id + 64, (int)tmp.size()) - id;
+#endif
         co_yield false;
         for (int prid = id; prid < std::min(id + 64, (int)tmp.size());
              prid++) { // scatter
           auto &vtxA = graph.plgraph[(*tmp[prid]).vid];
           auto *Arr = vtxA.PE;
-          if (vtxA.deg2)
+          if (vtxA.deg2) {
             _mm_prefetch(&graph.pledge[vtxA.offset], _MM_HINT_T0);
+#ifdef COUNT_WORK
+            counters::prefetches++;
+#endif
+          }
           for (uint32 e = 0; e < vtxA.deg1; e += 2) {
             if (!(Arr[e] >> MAX_OFS))
               ctx2[Arr[e] >> 18].emplace_back(Arr[e], Arr[e + 1],
@@ -166,6 +190,9 @@ protected:
         for (int prid = id; prid < std::min(id + 64, (int)low.size()); prid++) {
           _mm_prefetch(&func.vdata[(*low[prid]).e], _MM_HINT_T0);
         }
+#ifdef COUNT_WORK
+        counters::prefetches += std::min(id + 64, (int)low.size()) - id;
+#endif
         co_yield false;
         for (int prid = id; prid < std::min(id + 64, (int)low.size()); prid++) {
           uint32 dst = (*low[prid]).e;
@@ -180,6 +207,9 @@ protected:
              prid++) {
           _mm_prefetch(&graph.highedge[(*high[prid]).w], _MM_HINT_T0);
         }
+#ifdef COUNT_WORK
+        counters::prefetches += std::min(id + 64, (int)high.size()) - id;
+#endif
         co_yield false;
         for (int prid = id; prid < std::min(id + 64, (int)high.size());
              prid++) {
@@ -363,13 +393,20 @@ protected:
         for (int prid = id; prid < std::min(id + 64, (int)tmp.size()); prid++) {
           _mm_prefetch(&graph.plgraph[(*tmp[prid]).vid], _MM_HINT_T0);
         }
+#ifdef COUNT_WORK
+        counters::prefetches += std::min(id + 64, (int)tmp.size()) - id;
+#endif
         co_yield false;
         for (int prid = id; prid < std::min(id + 64, (int)tmp.size());
              prid++) { // scatter
           auto &vtxA = graph.plgraph[(*tmp[prid]).vid];
           auto *Arr = vtxA.PE;
-          if (vtxA.deg2)
+          if (vtxA.deg2) {
             _mm_prefetch(&graph.pledge[vtxA.offset], _MM_HINT_T0);
+#ifdef COUNT_WORK
+            counters::prefetches++;
+#endif
+          }
           for (uint32 e = 0; e < vtxA.deg1; e += 2) {
             if (!(Arr[e] >> MAX_OFS))
               ctx2[Arr[e] >> 18].emplace_back(Arr[e], Arr[e + 1],
@@ -401,6 +438,9 @@ protected:
         for (int prid = id; prid < std::min(id + 64, (int)low.size()); prid++) {
           _mm_prefetch(&func.vdata[(*low[prid]).e], _MM_HINT_T0);
         }
+#ifdef COUNT_WORK
+        counters::prefetches += std::min(id + 64, (int)low.size()) - id;
+#endif
         co_yield false;
         for (int prid = id; prid < std::min(id + 64, (int)low.size()); prid++) {
           uint32 dst = (*low[prid]).e;
@@ -415,6 +455,9 @@ protected:
              prid++) {
           _mm_prefetch(&graph.highedge[(*high[prid]).w], _MM_HINT_T0);
         }
+#ifdef COUNT_WORK
+        counters::prefetches += std::min(id + 64, (int)high.size()) - id;
+#endif
         co_yield false;
         for (int prid = id; prid < std::min(id + 64, (int)high.size());
              prid++) {
