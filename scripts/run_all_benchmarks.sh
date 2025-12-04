@@ -1,9 +1,17 @@
 #!/bin/bash
 #
 # Comprehensive CoroGraph Benchmark Script
-# Runs all algorithms on all graphs with performance counters
+# Runs all algorithms on all graphs
 #
-# Measures: MLP, IPC, Memory Bound (paper metric), execution time
+# Two modes:
+#   MODE=perf   - Measure hardware perf counters (MLP, IPC, Memory Bound)
+#   MODE=count  - Measure prefetch counts (only for coroutine-based algorithms)
+#
+# Algorithm types:
+#   Coroutine-based (use Executor_ForEach.h with batched prefetching):
+#     - sssp, kcore
+#   Synchronous (use Executor_EdgeMap.h or do_all, no coroutine prefetching):
+#     - pr, wcc
 #
 
 set -e
@@ -16,22 +24,34 @@ GRAPHS_DIR="${PROJECT_DIR}/graphs"
 # Configuration
 THREADS="${THREADS:-1}"  # Default 1 thread (for MLP analysis)
 DELTA="${DELTA:-13}"     # Default delta for SSSP
+MODE="${MODE:-perf}"     # perf or count
+
 # Algorithms to run (space-separated). Set ALGOS env var to override.
-# Available: sssp pr wcc kcore
-ALGOS="${ALGOS:-sssp pr wcc}"  # kcore excluded due to memory issues
+# For MODE=count, only coroutine-based algorithms are valid: sssp, kcore
+# For MODE=perf, all algorithms are valid: sssp, kcore, pr, wcc
+if [ "$MODE" == "count" ]; then
+    ALGOS="${ALGOS:-sssp kcore}"
+else
+    ALGOS="${ALGOS:-sssp kcore pr wcc}"
+fi
 
 # Output directory
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-OUTPUT_DIR="${PROJECT_DIR}/benchmark_results/run_${TIMESTAMP}"
+OUTPUT_DIR="${PROJECT_DIR}/benchmark_results/${MODE}_${TIMESTAMP}"
 mkdir -p "$OUTPUT_DIR"
 
 echo "=========================================="
 echo "CoroGraph Comprehensive Benchmark"
 echo "=========================================="
+echo "Mode: $MODE"
 echo "Threads: $THREADS"
 echo "Delta (SSSP): $DELTA"
 echo "Algorithms: $ALGOS"
 echo "Output directory: $OUTPUT_DIR"
+echo ""
+echo "Algorithm Types:"
+echo "  Coroutine-based (batched prefetching): sssp, kcore"
+echo "  Synchronous (no coroutine prefetching): pr, wcc"
 echo "=========================================="
 echo ""
 
@@ -40,23 +60,55 @@ check_executable() {
     local exe="$1"
     if [ ! -f "$exe" ]; then
         echo "ERROR: Executable not found: $exe"
-        echo "Please build first: cd build && make -j\$(nproc)"
+        echo "Please build first: cd build && cmake .. && make -j\$(nproc)"
         exit 1
     fi
 }
 
 # Define algorithms and their executables
+# Format: ALGORITHMS[name]="executable"
+# Format: ALGO_TYPE[name]="coroutine" or "sync"
 declare -A ALGORITHMS
+declare -A ALGORITHMS_COUNT
+declare -A ALGO_TYPE
+
+# Coroutine-based algorithms (use Executor_ForEach.h)
 ALGORITHMS["sssp"]="${BUILD_DIR}/app/sssp/crg-sssp-perf"
-ALGORITHMS["pr"]="${BUILD_DIR}/app/pr/crg-pr-perf"
-ALGORITHMS["wcc"]="${BUILD_DIR}/app/cc/crg-cc-perf"
+ALGORITHMS_COUNT["sssp"]="${BUILD_DIR}/app/sssp/crg-sssp-perf-count"
+ALGO_TYPE["sssp"]="coroutine"
+
 ALGORITHMS["kcore"]="${BUILD_DIR}/app/k-core/crg-kcore-perf"
+ALGORITHMS_COUNT["kcore"]="${BUILD_DIR}/app/k-core/crg-kcore-perf-count"
+ALGO_TYPE["kcore"]="coroutine"
+
+# Synchronous algorithms (use Executor_EdgeMap.h or do_all)
+ALGORITHMS["pr"]="${BUILD_DIR}/app/pr/crg-pr-perf"
+ALGO_TYPE["pr"]="sync"
+
+ALGORITHMS["wcc"]="${BUILD_DIR}/app/cc/crg-cc-perf"
+ALGO_TYPE["wcc"]="sync"
+
+# Validate algorithms for count mode
+if [ "$MODE" == "count" ]; then
+    for algo in $ALGOS; do
+        if [ "${ALGO_TYPE[$algo]}" != "coroutine" ]; then
+            echo "ERROR: Algorithm '$algo' is not coroutine-based and cannot be used with MODE=count"
+            echo "Only coroutine-based algorithms (sssp, kcore) support prefetch counting."
+            exit 1
+        fi
+    done
+fi
 
 # Check all executables
 echo "Checking executables..."
-for algo in "${!ALGORITHMS[@]}"; do
-    check_executable "${ALGORITHMS[$algo]}"
-    echo "  [OK] $algo: ${ALGORITHMS[$algo]}"
+for algo in $ALGOS; do
+    if [ "$MODE" == "count" ]; then
+        exe="${ALGORITHMS_COUNT[$algo]}"
+    else
+        exe="${ALGORITHMS[$algo]}"
+    fi
+    check_executable "$exe"
+    echo "  [OK] $algo (${ALGO_TYPE[$algo]}): $exe"
 done
 echo ""
 
@@ -79,14 +131,19 @@ echo ""
 
 # Summary CSV file
 SUMMARY_FILE="${OUTPUT_DIR}/summary.csv"
-echo "algorithm,graph,threads,mlp,ipc,memory_stall_pct,memory_bound_pct,all_loads,l3_miss_loads,l3_miss_total,time_sec" > "$SUMMARY_FILE"
+if [ "$MODE" == "count" ]; then
+    echo "algorithm,graph,threads,prefetches,time_sec,algo_type" > "$SUMMARY_FILE"
+else
+    echo "algorithm,graph,threads,mlp,ipc,memory_stall_pct,memory_bound_pct,all_loads,l3_miss_loads,l3_miss_total,time_sec,algo_type" > "$SUMMARY_FILE"
+fi
 
 # Function to parse perf output and extract metrics
-parse_output() {
+parse_perf_output() {
     local output_file="$1"
     local algo="$2"
     local graph="$3"
     local threads="$4"
+    local algo_type="$5"
 
     # Extract values from [PERF] lines
     local cycles=$(grep '\[PERF\] cycles:' "$output_file" | awk -F': ' '{print $2}' | tr -d ' ')
@@ -98,11 +155,11 @@ parse_output() {
     local l3_miss_loads=$(grep '\[PERF\] mem_load_retired.l3_miss:' "$output_file" | awk -F': ' '{print $2}' | tr -d ' ')
     local l3_miss_total=$(grep '\[PERF\] longest_lat_cache.miss:' "$output_file" | awk -F': ' '{print $2}' | tr -d ' ')
 
-    # Extract best time from output (match "time: X.XXX sec" but not "Total measured time:")
+    # Extract time
     local time_sec=$(grep -E '^time:' "$output_file" | awk '{print $2}' | sort -n | head -1)
 
     # Calculate metrics using Python for precision
-    python3 - "$cycles" "$instructions" "$pending" "$pending_cycles" "$stalls_mem" "$all_loads" "$l3_miss_loads" "$l3_miss_total" "$time_sec" "$algo" "$graph" "$threads" "$SUMMARY_FILE" << 'PYTHON_SCRIPT'
+    python3 - "$cycles" "$instructions" "$pending" "$pending_cycles" "$stalls_mem" "$all_loads" "$l3_miss_loads" "$l3_miss_total" "$time_sec" "$algo" "$graph" "$threads" "$algo_type" "$SUMMARY_FILE" << 'PYTHON_SCRIPT'
 import sys
 
 cycles = int(sys.argv[1]) if sys.argv[1] else 0
@@ -117,7 +174,8 @@ time_sec = float(sys.argv[9]) if sys.argv[9] else 0
 algo = sys.argv[10]
 graph = sys.argv[11]
 threads = sys.argv[12]
-summary_file = sys.argv[13]
+algo_type = sys.argv[13]
+summary_file = sys.argv[14]
 
 # Calculate metrics
 ipc = instructions / cycles if cycles > 0 else 0
@@ -127,15 +185,35 @@ mem_bound = stalls_mem / cycles * 100 if cycles > 0 else 0
 
 # Append to summary
 with open(summary_file, 'a') as f:
-    f.write(f"{algo},{graph},{threads},{mlp:.2f},{ipc:.2f},{mem_stall:.1f},{mem_bound:.1f},{all_loads},{l3_miss_loads},{l3_miss_total},{time_sec:.3f}\n")
+    f.write(f"{algo},{graph},{threads},{mlp:.2f},{ipc:.2f},{mem_stall:.1f},{mem_bound:.1f},{all_loads},{l3_miss_loads},{l3_miss_total},{time_sec:.3f},{algo_type}\n")
 
-print(f"  MLP: {mlp:.2f}, IPC: {ipc:.2f}, MemStall: {mem_stall:.1f}%, MemBound: {mem_bound:.1f}%, Loads: {all_loads}, L3MissLoads: {l3_miss_loads}, L3MissTotal: {l3_miss_total}, Time: {time_sec:.3f}s")
+print(f"  MLP: {mlp:.2f}, IPC: {ipc:.2f}, MemStall: {mem_stall:.1f}%, MemBound: {mem_bound:.1f}%, Time: {time_sec:.3f}s")
 PYTHON_SCRIPT
+}
+
+# Function to parse count output and extract metrics
+parse_count_output() {
+    local output_file="$1"
+    local algo="$2"
+    local graph="$3"
+    local threads="$4"
+    local algo_type="$5"
+
+    # Extract prefetch count from [WORK] lines
+    local prefetches=$(grep '\[WORK\] prefetches:' "$output_file" | awk -F': ' '{print $2}' | tr -d ' ')
+
+    # Extract time
+    local time_sec=$(grep -E '^time:' "$output_file" | awk '{print $2}' | sort -n | head -1)
+
+    # Append to summary
+    echo "$algo,$graph,$threads,$prefetches,$time_sec,$algo_type" >> "$SUMMARY_FILE"
+
+    echo "  Prefetches: $prefetches, Time: ${time_sec}s"
 }
 
 # Run benchmarks
 echo "=========================================="
-echo "Running Benchmarks"
+echo "Running Benchmarks (MODE=$MODE)"
 echo "=========================================="
 echo ""
 
@@ -147,11 +225,16 @@ for graph_path in "${GRAPHS[@]}"; do
     echo "=========================================="
 
     for algo in $ALGOS; do
-        exe="${ALGORITHMS[$algo]}"
+        if [ "$MODE" == "count" ]; then
+            exe="${ALGORITHMS_COUNT[$algo]}"
+        else
+            exe="${ALGORITHMS[$algo]}"
+        fi
+        algo_type="${ALGO_TYPE[$algo]}"
         output_file="${OUTPUT_DIR}/${algo}_${graph_name}.txt"
 
         echo ""
-        echo "--- $algo on $graph_name ---"
+        echo "--- $algo ($algo_type) on $graph_name ---"
 
         # Build command based on algorithm
         if [ "$algo" == "sssp" ]; then
@@ -164,7 +247,11 @@ for graph_path in "${GRAPHS[@]}"; do
 
         # Run and capture output
         if $cmd 2>&1 | tee "$output_file"; then
-            parse_output "$output_file" "$algo" "$graph_name" "$THREADS"
+            if [ "$MODE" == "count" ]; then
+                parse_count_output "$output_file" "$algo" "$graph_name" "$THREADS" "$algo_type"
+            else
+                parse_perf_output "$output_file" "$algo" "$graph_name" "$THREADS" "$algo_type"
+            fi
         else
             echo "  [ERROR] $algo failed on $graph_name"
         fi
@@ -186,21 +273,23 @@ echo ""
 echo "Detailed outputs in: $OUTPUT_DIR"
 echo ""
 
-# Generate comparison with paper (if applicable)
-echo "=========================================="
-echo "Comparison with Paper Results"
-echo "=========================================="
-echo ""
-echo "Paper reports for 8 threads on LiveJournal:"
-echo "  SSSP: Memory Bound ~28.3%"
-echo "  PR:   Memory Bound ~27.4%"
-echo "  WCC:  Memory Bound ~30.4%"
-echo "  k-core: Memory Bound ~31.6%"
-echo ""
-echo "Your results (Memory Bound %):"
-grep "livejournal" "$SUMMARY_FILE" 2>/dev/null | while read line; do
-    algo=$(echo "$line" | cut -d, -f1)
-    mem_bound=$(echo "$line" | cut -d, -f7)
-    echo "  $algo: $mem_bound%"
-done
-echo ""
+if [ "$MODE" == "perf" ]; then
+    # Generate comparison with paper (if applicable)
+    echo "=========================================="
+    echo "Comparison with Paper Results"
+    echo "=========================================="
+    echo ""
+    echo "Paper reports for 8 threads on LiveJournal:"
+    echo "  SSSP: Memory Bound ~28.3%"
+    echo "  PR:   Memory Bound ~27.4%"
+    echo "  WCC:  Memory Bound ~30.4%"
+    echo "  k-core: Memory Bound ~31.6%"
+    echo ""
+    echo "Your results (Memory Bound %):"
+    grep "livejournal" "$SUMMARY_FILE" 2>/dev/null | while read line; do
+        algo=$(echo "$line" | cut -d, -f1)
+        mem_bound=$(echo "$line" | cut -d, -f7)
+        echo "  $algo: $mem_bound%"
+    done
+    echo ""
+fi

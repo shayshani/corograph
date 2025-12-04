@@ -2,6 +2,7 @@
 #include "galois/Bag.h"
 #include "galois/graphs/LCGraph.h"
 #include "galois/substrate/ThreadPool.h"
+#include "galois/runtime/Executor_ForEach.h"  // For work counters
 #include <sys/ioctl.h>
 #include <linux/perf_event.h>
 #include <asm/unistd.h>
@@ -287,6 +288,10 @@ int main(int argc, char **argv) {
       galois::iterate(tt), [&](const uint32 &n) { curdeg[n] = G.deg[n]; },
       galois::no_stats(), galois::loopname("initNodeData"));
 
+#ifdef COUNT_WORK
+  galois::runtime::counters::reset();
+#endif
+
   perf_start();
 
   struct timespec start, end;
@@ -335,6 +340,11 @@ int main(int argc, char **argv) {
   printf("Max core number: %d\n", max_core);
 
   perf_read_and_print();
+
+#ifdef COUNT_WORK
+  galois::runtime::counters::print();
+#endif
+
   perf_cleanup();
 
   return 0;
