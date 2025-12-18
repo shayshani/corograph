@@ -22,16 +22,20 @@ fi
 # Determine binary based on algorithm
 case $ALGORITHM in
     sssp)
-        BINARY="./build/crg-sssp"
+        BINARY="./build/app/sssp/crg-sssp-perf"
+        BINARY_ALT="./build/app/sssp/crg-sssp"
         ;;
     pr)
-        BINARY="./build/crg-pr"
+        BINARY="./build/app/pr/crg-pr"
+        BINARY_ALT="./build/app/pr/crg-pr"
         ;;
     cc)
-        BINARY="./build/crg-cc-async"
+        BINARY="./build/app/cc/crg-cc-async"
+        BINARY_ALT="./build/app/cc/crg-cc-async"
         ;;
     kcore)
-        BINARY="./build/crg-kcore"
+        BINARY="./build/app/k-core/crg-kcore"
+        BINARY_ALT="./build/app/k-core/crg-kcore"
         ;;
     *)
         echo "Unknown algorithm: $ALGORITHM"
@@ -39,10 +43,16 @@ case $ALGORITHM in
         ;;
 esac
 
+# Try primary binary, fall back to alternate
 if [ ! -f "$BINARY" ]; then
-    echo "Binary not found: $BINARY"
-    echo "Please build the project first with: mkdir -p build && cd build && cmake .. && make"
-    exit 1
+    if [ -f "$BINARY_ALT" ]; then
+        BINARY="$BINARY_ALT"
+    else
+        echo "Binary not found: $BINARY"
+        echo "Please build the project first:"
+        echo "  mkdir -p build && cd build && cmake .. && make -j\$(nproc)"
+        exit 1
+    fi
 fi
 
 mkdir -p "$OUTPUT_DIR"
