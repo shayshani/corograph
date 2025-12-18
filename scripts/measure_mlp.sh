@@ -9,7 +9,7 @@ set -e
 # Configuration
 GRAPH_PATH="${1:-}"
 ALGORITHM="${2:-sssp}"
-MAX_THREADS="${3:-64}"
+MAX_THREADS="${3:-40}"
 OUTPUT_DIR="mlp_results_$(date +%Y%m%d_%H%M%S)"
 
 if [ -z "$GRAPH_PATH" ]; then
@@ -109,16 +109,21 @@ else
     USE_PERF=true
 fi
 
-# Thread counts to test (powers of 2 up to max)
+# Thread counts to test (powers of 2 up to max, plus max itself)
 THREAD_COUNTS=""
 t=1
 while [ $t -le $MAX_THREADS ]; do
     THREAD_COUNTS="$THREAD_COUNTS $t"
     t=$((t * 2))
 done
-# Add max_threads if not already included
-if [ $((t / 2)) -ne $MAX_THREADS ]; then
+# Add max_threads if not already included (e.g., 40 is not a power of 2)
+last_added=$((t / 2))
+if [ $last_added -ne $MAX_THREADS ]; then
     THREAD_COUNTS="$THREAD_COUNTS $MAX_THREADS"
+fi
+# Also add 20 for 40-core machine (half the cores)
+if [ $MAX_THREADS -eq 40 ] && [[ ! "$THREAD_COUNTS" =~ " 20 " ]]; then
+    THREAD_COUNTS="1 2 4 8 16 20 32 40"
 fi
 
 echo ""
