@@ -66,37 +66,31 @@ echo "Max threads: $MAX_THREADS"
 echo "Output directory: $OUTPUT_DIR"
 echo "=============================================="
 
-# Check available perf events
+# Check available perf events by actually testing them
 echo ""
 echo "Checking available perf events..."
 PERF_EVENTS=""
 
+# Function to test if a perf event works
+test_perf_event() {
+    perf stat -e "$1" true 2>/dev/null
+    return $?
+}
+
 # Core memory events (widely available)
-if perf list | grep -q "cache-misses"; then
-    PERF_EVENTS="$PERF_EVENTS,cache-misses"
-fi
-if perf list | grep -q "cache-references"; then
-    PERF_EVENTS="$PERF_EVENTS,cache-references"
-fi
-if perf list | grep -q "LLC-load-misses"; then
-    PERF_EVENTS="$PERF_EVENTS,LLC-load-misses"
-fi
-if perf list | grep -q "LLC-loads"; then
-    PERF_EVENTS="$PERF_EVENTS,LLC-loads"
-fi
+for event in cache-misses cache-references LLC-load-misses LLC-loads; do
+    if test_perf_event "$event"; then
+        PERF_EVENTS="$PERF_EVENTS,$event"
+    fi
+done
 
-# Memory bandwidth events (Intel specific)
-if perf list | grep -q "offcore_response"; then
-    PERF_EVENTS="$PERF_EVENTS,offcore_response.all_data_rd.llc_miss.local_dram"
-fi
-
-# Stall cycles
-if perf list | grep -q "cycle_activity.stalls_l3_miss"; then
-    PERF_EVENTS="$PERF_EVENTS,cycle_activity.stalls_l3_miss"
-fi
-if perf list | grep -q "cycle_activity.stalls_mem_any"; then
-    PERF_EVENTS="$PERF_EVENTS,cycle_activity.stalls_mem_any"
-fi
+# Stall cycles (try different variants)
+for event in cycle_activity.stalls_l3_miss cycle_activity.stalls_mem_any stalled-cycles-backend; do
+    if test_perf_event "$event"; then
+        PERF_EVENTS="$PERF_EVENTS,$event"
+        break  # Only need one stall metric
+    fi
+done
 
 # Remove leading comma
 PERF_EVENTS="${PERF_EVENTS#,}"
