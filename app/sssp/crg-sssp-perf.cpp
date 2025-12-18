@@ -189,13 +189,15 @@ void perf_stop() {
   }
 }
 
-void perf_read_and_print() {
+void perf_read_and_print(double exec_time_sec) {
   fprintf(stderr, "\n[PERF] === RESULTS (Algorithm Only) ===\n");
 
   uint64_t cycles = 0, instructions = 0;
   uint64_t pending = 0, pending_cycles = 0;
   uint64_t stalls_mem_any = 0;
   uint64_t l1_misses = 0, llc_misses = 0;
+  uint64_t llc_miss_total = 0;  // includes prefetches
+  uint64_t l3_miss_retired = 0;
 
   for (auto& pc : perf_counters) {
     long long count;
@@ -210,6 +212,8 @@ void perf_read_and_print() {
       if (strcmp(pc.name, "cycle_activity.stalls_mem_any") == 0) stalls_mem_any = count;
       if (strcmp(pc.name, "L1-dcache-load-misses") == 0) l1_misses = count;
       if (strcmp(pc.name, "LLC-load-misses") == 0) llc_misses = count;
+      if (strcmp(pc.name, "longest_lat_cache.miss") == 0) llc_miss_total = count;
+      if (strcmp(pc.name, "mem_load_retired.l3_miss") == 0) l3_miss_retired = count;
     }
   }
 
@@ -231,6 +235,22 @@ void perf_read_and_print() {
     fprintf(stderr, "[PERF] Memory Bound %% (stalls_mem_any/cycles): %.1f%%\n",
             (double)stalls_mem_any / cycles * 100);
   }
+
+  // Calculate memory bandwidth utilization
+  // Each LLC miss fetches a 64-byte cache line from DRAM
+  // Use longest_lat_cache.miss which includes prefetches, or fall back to LLC-load-misses
+  uint64_t dram_accesses = (llc_miss_total > 0) ? llc_miss_total : llc_misses;
+  if (dram_accesses > 0 && exec_time_sec > 0) {
+    double bytes_from_dram = (double)dram_accesses * 64.0;  // 64 bytes per cache line
+    double bandwidth_gbs = bytes_from_dram / exec_time_sec / 1e9;
+    fprintf(stderr, "\n[PERF] === BANDWIDTH ANALYSIS ===\n");
+    fprintf(stderr, "[PERF] DRAM accesses (LLC misses): %lu\n", dram_accesses);
+    fprintf(stderr, "[PERF] Bytes from DRAM: %.2f GB\n", bytes_from_dram / 1e9);
+    fprintf(stderr, "[PERF] Memory Bandwidth: %.2f GB/s\n", bandwidth_gbs);
+    fprintf(stderr, "[PERF] (Note: This is READ bandwidth only. Peak DDR4-2666 ~85 GB/s per channel)\n");
+    fprintf(stderr, "[PERF] (Typical 2-channel system peak: ~170 GB/s, 4-channel: ~340 GB/s)\n");
+  }
+
   fprintf(stderr, "[PERF] ========================\n\n");
 }
 
@@ -325,8 +345,8 @@ int main(int argc, char **argv) {
   printf("max distance: %d\n", maxdist);
   printf("reachable vertices: %d / %d\n", reachable, G.numV);
 
-  // Print perf results
-  perf_read_and_print();
+  // Print perf results (pass execution time for bandwidth calculation)
+  perf_read_and_print(time);
 
 #ifdef COUNT_WORK
   galois::runtime::counters::print();

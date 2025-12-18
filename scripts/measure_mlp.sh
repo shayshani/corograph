@@ -82,7 +82,7 @@ echo ""
 
 # Results file - header matches what crg-sssp-perf outputs
 RESULTS_FILE="$OUTPUT_DIR/results.csv"
-echo "threads,time_sec,cycles,instructions,ipc,mlp,mem_bound_pct,l1_misses,llc_misses" > "$RESULTS_FILE"
+echo "threads,time_sec,ipc,mlp,mem_bound_pct,bandwidth_gbs,llc_misses" > "$RESULTS_FILE"
 
 # Run tests
 for threads in $THREAD_COUNTS; do
@@ -97,19 +97,17 @@ for threads in $THREAD_COUNTS; do
 
     # Parse output from crg-sssp-perf
     TIME_SEC=$(grep -E "^time:" "$OUTPUT_FILE" | grep -oE "[0-9]+\.[0-9]+" || echo "0")
-    CYCLES=$(grep "cycles:" "$OUTPUT_FILE" | grep -oE "[0-9]+" | head -1 || echo "0")
-    INSTRUCTIONS=$(grep "instructions:" "$OUTPUT_FILE" | grep -oE "[0-9]+" | head -1 || echo "0")
     IPC=$(grep "IPC:" "$OUTPUT_FILE" | grep -oE "[0-9]+\.[0-9]+" || echo "0")
     MLP=$(grep "MLP:" "$OUTPUT_FILE" | grep -oE "[0-9]+\.[0-9]+" || echo "0")
-    MEM_BOUND=$(grep -E "Memory Bound %|Memory Stall %" "$OUTPUT_FILE" | grep -oE "[0-9]+\.[0-9]+" | head -1 || echo "0")
-    L1_MISSES=$(grep "L1-dcache-load-misses:" "$OUTPUT_FILE" | grep -oE "[0-9]+" | head -1 || echo "0")
-    LLC_MISSES=$(grep "LLC-load-misses:" "$OUTPUT_FILE" | grep -oE "[0-9]+" | head -1 || echo "0")
+    MEM_BOUND=$(grep -E "Memory Bound %" "$OUTPUT_FILE" | grep -oE "[0-9]+\.[0-9]+" | head -1 || echo "0")
+    BANDWIDTH=$(grep "Memory Bandwidth:" "$OUTPUT_FILE" | grep -oE "[0-9]+\.[0-9]+" || echo "0")
+    LLC_MISSES=$(grep "DRAM accesses" "$OUTPUT_FILE" | grep -oE "[0-9]+" | head -1 || echo "0")
 
     # Save to CSV
-    echo "$threads,$TIME_SEC,$CYCLES,$INSTRUCTIONS,$IPC,$MLP,$MEM_BOUND,$L1_MISSES,$LLC_MISSES" >> "$RESULTS_FILE"
+    echo "$threads,$TIME_SEC,$IPC,$MLP,$MEM_BOUND,$BANDWIDTH,$LLC_MISSES" >> "$RESULTS_FILE"
 
     echo ""
-    echo ">>> Time: ${TIME_SEC}s | IPC: $IPC | MLP: $MLP | Memory Bound: ${MEM_BOUND}%"
+    echo ">>> Time: ${TIME_SEC}s | IPC: $IPC | MLP: $MLP | Mem Bound: ${MEM_BOUND}% | BW: ${BANDWIDTH} GB/s"
     echo ""
 
     # Small delay between runs
@@ -147,15 +145,22 @@ Key Metrics Explanation:
    - This is comparable to VTune's "Memory Bound" metric (paper reports ~28% for CoroGraph)
    - Lower is better
 
-3. IPC (Instructions Per Cycle):
+3. Memory Bandwidth (GB/s):
+   = LLC_misses * 64 bytes / execution_time
+   - Actual memory bandwidth consumed
+   - Compare to peak: DDR4-2666 ~85 GB/s per channel
+   - Typical systems: 2-channel (~170 GB/s), 4-channel (~340 GB/s)
+
+4. IPC (Instructions Per Cycle):
    - Low IPC (<1) typically indicates memory stalls
    - Higher is better
 
 Scalability Analysis:
 ---------------------
 - If time scales linearly with threads: compute bound (good)
-- If time plateaus early + high MLP: memory bandwidth saturated
-- If time plateaus early + low MLP: MLP limited (room for improvement!)
+- If time plateaus + high bandwidth (near peak): memory bandwidth saturated (hardware limit)
+- If time plateaus + low bandwidth + low MLP: MLP limited (room for improvement!)
+- If time plateaus + low bandwidth + high MLP: latency bound (memory too slow)
 
 EOF
 
@@ -204,12 +209,14 @@ ax2.set_xscale('log', base=2)
 ax2.legend()
 ax2.grid(True, alpha=0.3)
 
-# Plot 3: MLP
+# Plot 3: MLP and Memory Bound
 ax3 = axes[1, 0]
 if 'mlp' in df.columns and df['mlp'].iloc[0] > 0:
-    ax3.plot(df['threads'], df['mlp'], 'm-o', linewidth=2, markersize=8)
-    ax3.set_ylabel('MLP')
+    ax3.plot(df['threads'], df['mlp'], 'm-o', linewidth=2, markersize=8, label='MLP')
+    ax3.set_ylabel('MLP (outstanding requests)')
     ax3.set_title('Memory Level Parallelism')
+    ax3.axhline(y=10, color='g', linestyle='--', alpha=0.5, label='Good MLP (~10)')
+    ax3.legend()
 else:
     ax3.plot(df['threads'], df['ipc'], 'm-o', linewidth=2, markersize=8)
     ax3.set_ylabel('IPC')
@@ -218,12 +225,20 @@ ax3.set_xlabel('Threads')
 ax3.set_xscale('log', base=2)
 ax3.grid(True, alpha=0.3)
 
-# Plot 4: Memory Bound %
+# Plot 4: Memory Bandwidth
 ax4 = axes[1, 1]
-if 'mem_bound_pct' in df.columns and df['mem_bound_pct'].iloc[0] > 0:
+if 'bandwidth_gbs' in df.columns and df['bandwidth_gbs'].iloc[0] > 0:
+    ax4.plot(df['threads'], df['bandwidth_gbs'], 'c-o', linewidth=2, markersize=8)
+    ax4.set_ylabel('Bandwidth (GB/s)')
+    ax4.set_title('Memory Bandwidth Utilization')
+    # Add reference lines for typical peak bandwidth
+    ax4.axhline(y=170, color='r', linestyle='--', alpha=0.5, label='2-channel peak (~170 GB/s)')
+    ax4.axhline(y=85, color='orange', linestyle='--', alpha=0.5, label='1-channel peak (~85 GB/s)')
+    ax4.legend(fontsize=8)
+elif 'mem_bound_pct' in df.columns and df['mem_bound_pct'].iloc[0] > 0:
     ax4.plot(df['threads'], df['mem_bound_pct'], 'r-o', linewidth=2, markersize=8)
     ax4.set_ylabel('Memory Bound (%)')
-    ax4.set_title('Memory Bound % (stalls_mem_any/cycles)')
+    ax4.set_title('Memory Bound %')
     ax4.axhline(y=28, color='g', linestyle='--', label='CoroGraph paper (~28%)')
     ax4.legend()
 else:
